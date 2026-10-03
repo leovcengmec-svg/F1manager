@@ -3,7 +3,8 @@ name: F1 Team Manager - Build APK
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -17,28 +18,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Localizar e extrair ZIP do projeto
+      - name: Localizar e extrair projeto V30
         shell: bash
         run: |
           set -euxo pipefail
 
-          ZIP="$(find . -maxdepth 1 -type f -name 'F1TeamManager_Android_V30_First_Real_APK_Candidate.zip' -print -quit)"
+          ZIP="./F1TeamManager_Android_V30_First_Real_APK_Candidate.zip"
 
-          if [ -z "$ZIP" ]; then
-            echo "ERRO: ZIP não encontrado."
+          if [ ! -f "$ZIP" ]; then
+            echo "ERRO: ZIP não encontrado:"
+            echo "$ZIP"
+            echo ""
+            echo "Arquivos disponíveis:"
+            ls -la
             exit 1
           fi
 
           rm -rf project
-          mkdir project
+          mkdir -p project
+
           unzip -q "$ZIP" -d project
 
-          PROJECT_DIR="$(find project -name settings.gradle.kts -type f -print -quit | xargs -r dirname)"
+          SETTINGS=$(find project -name "settings.gradle.kts" -type f -print -quit)
 
-          if [ -z "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "ERRO: estrutura Android não encontrada."
+          if [ -z "$SETTINGS" ]; then
+            echo "ERRO: settings.gradle.kts não encontrado dentro do ZIP."
+            find project -maxdepth 5 -type f
             exit 1
           fi
+
+          PROJECT_DIR="$(dirname "$SETTINGS")"
+
+          if [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
+            echo "ERRO: app/build.gradle.kts não encontrado."
+            exit 1
+          fi
+
+          echo "Projeto encontrado em:"
+          echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
@@ -54,36 +71,32 @@ jobs:
           gradle-version: "9.5.1"
           cache-provider: basic
 
-      - name: Instalar Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools platforms;android-37 build-tools;36.0.0"
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
 
-      - name: Instalar componentes Android
-        shell: bash
+      - name: Verificar ambiente
         run: |
-          set -euxo pipefail
+          echo "Java:"
+          java -version
 
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          echo ""
+          echo "Gradle:"
+          gradle --version
 
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f -print -quit)"
-          fi
-
-          test -x "$SDKMANAGER"
-
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-
-          "$SDKMANAGER" \
-            "platform-tools" \
-            "platforms;android-37" \
-            "build-tools;36.0.0"
-
-      - name: Validar Gradle
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: gradle --version
+          echo ""
+          echo "Android SDK:"
+          echo "$ANDROID_HOME"
 
       - name: Compilar APK Debug
         working-directory: ${{ env.PROJECT_DIR }}
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+        run: |
+          gradle :app:assembleDebug \
+            --stacktrace \
+            --no-daemon
 
       - name: Verificar APK
         working-directory: ${{ env.PROJECT_DIR }}
@@ -93,14 +106,26 @@ jobs:
 
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
-          test -s "$APK"
+          if [ ! -s "$APK" ]; then
+            echo "ERRO: APK não foi gerado."
+            echo ""
+            echo "Arquivos de build:"
+            find app/build -type f 2>/dev/null || true
+            exit 1
+          fi
 
+          echo "======================================"
           echo "APK GERADO COM SUCESSO"
+          echo "======================================"
+
           ls -lh "$APK"
+
+          echo ""
+          file "$APK"
 
       - name: Publicar APK
         uses: actions/upload-artifact@v4
         with:
-          name: F1TeamManager-debug-apk-v30
+          name: F1TeamManager-V30-debug-apk
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
